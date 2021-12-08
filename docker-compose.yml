@@ -1,0 +1,198 @@
+version: "2.1"
+
+services:
+  #Consul for services discovery
+  consul:
+    image: "consul:latest"
+    hostname: consul
+    volumes:
+      - ./Docker/consul/data:/consul/data
+      - ./Doker/consul/config:/consul/config
+    environment:
+      - "CONSUL_LOCAL_CONFIG={\"disable_update_check\": true, \"skip_leave_on_interrupt\": true}"
+    entrypoint:
+      - consul
+      - agent
+      - -server
+      - -data-dir=/consul
+      - -bootstrap-expect=1
+      - -ui
+      - -client=0.0.0.0
+      #-retry-join=consul.server
+    ports:
+      - "8400:8400"
+      - "8500:8500"
+      - "8600:53"
+  # primary database service
+  redis:
+    container_name: redis-cont
+    image: "redis:alpine"
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_REPLICATION_MODE=master
+    ports:
+      - "6379:6379"
+    #volumes:
+      # save redisearch data to your current working directory
+      #- ./Docker/redis/data:/data
+    command:
+      # Save if 100 keys are added in every 10 seconds
+      - "--save 10 100"
+      # Set password
+      - "--requirepass ${REDIS_PASSWORD}"
+
+  redisinsight: # redis db visualization dashboard
+    container_name: redisinsight-cont
+    image: redislabs/redisinsight
+    ports:
+      - 9001:8001
+    volumes:
+      - ./Docker/redisinsight/data:/db
+  pg:
+    image: postgres:12
+    restart: always
+    environment:
+      POSTGRES_DB: "${DATABASE_NAME}"
+      POSTGRES_USER: "${DATABASE_USER}"
+      POSTGRES_PASSWORD: "${DATABASE_PASSWORD}"
+      # for healthchecks
+      PGDATABASE: "${DATABASE_NAME}"
+      PGUSER: "${DATABASE_USER}"
+      PGPASSWORD: "${DATABASE_PASSWORD}"
+    volumes:
+      - ./Docker/postgres/initialization:/docker-entrypoint-initdb.d
+      - ./Docker/postgres/data:/var/lib/postgresql/data
+      - ./Docker/postgres/config/postgresql.conf:/etc/postgresql/postgresql.conf
+    ports:
+      - "${PG_DOCKER_HOST}:${PG_HOST_PORT}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+  
+  # Flask api
+  #wowza_exporter:
+  #  build:
+  #    dockerfile: ./Docker/exporter/inspector_Dockerfile
+  #    context: .
+  #  env_file:
+  #    - .env
+  #  working_dir: /usr/src/app/
+  #  restart: always
+  #  volumes:
+  #    - ./Exporter/app:/usr/src/app
+  #  # ports:
+  #  #   - "${API_HOST}:${API_PORT}:80"
+  #  command: python customExporter.py
+  #  environment:
+  #    WOWZA_ENDPOINT: "${WOWZA_ENDPOINT}"  
+  #  ports:
+  #    - "5000:5000"
+  #  depends_on:
+  #    pg:
+  #     condition: service_healthy
+
+
+  grafana:
+    build: grafana
+    ports:
+      - '3000:3000'
+      
+  prometheus:
+    image: prom/prometheus:v2.6.1
+    user: root
+    ports:
+      - '9090:9090'
+    env_file:
+      - .aws_prometheus_env
+    volumes:
+      - ./Docker/prometheus/config/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./Docker/prometheus/data:/prometheus
+
+# Flask api
+  inspector_flask:
+    build:
+      dockerfile: ./Docker/flask/inspector_Dockerfile
+      context: .
+    env_file:
+      - .env
+    working_dir: /usr/src/app/
+    restart: always
+    volumes:
+      - ./Flask/application:/usr/src/app
+    ports:
+      - "${API_HOST}:${API_PORT}:80"
+    environment:
+       CONSUL_SERVER: "consul"
+    depends_on:
+      - redis
+      - consul
+      - pg
+
+  autoscaler_flask:
+    build:
+      dockerfile: ./Docker/flask/autoscaler_Dockerfile
+      context: .
+    env_file:
+      - .env
+      - .aws_env
+    working_dir: /usr/src/app/
+    restart: always
+    volumes:
+      - ./Flask/application:/usr/src/app
+    ports:
+      - "${API_HOST}:${AUTOSCALER_PORT}:80"
+    environment:
+       CONSUL_SERVER: "consul"
+    depends_on:
+      - redis
+      - consul
+      - pg
+
+# celery worker
+  celery-worker:
+    build:
+      dockerfile: ./Docker/flask/inspector_Dockerfile
+      context: .
+    env_file:
+      - .env
+    working_dir: /usr/src/app/
+    # restart: always
+    volumes:
+      - ./Flask/application:/usr/src/app
+    environment:
+       LANG: C.UTF-8
+       LC_ALL: C.UTF-8
+    command: watchmedo auto-restart --directory=./ --pattern=*.py --recursive -- celery -A inspector_app.celery worker -l info
+    # command: watchmedo auto-restart --recursive -- celery -A WOLBF worker --beat -l info
+    # depends_on:
+      # redis:
+        # condition: service_healthy
+
+# celery beat
+  celery-beat:
+    build:
+      dockerfile: ./Docker/flask/inspector_Dockerfile
+      context: .
+    env_file:
+      - .env
+    working_dir: /usr/src/app/
+    restart: always
+    volumes:
+      - ./Flask/application:/usr/src/app
+    environment:
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+    command: watchmedo auto-restart --directory=./ --pattern=*.py --recursive -- celery -A inspector_app.celery beat -l info
+
+  nginx:
+    image: nginx
+    restart: always
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./Docker/nginx/conf.d:/etc/nginx/conf.d
+      - ./Docker/letsencrypt:/etc/letsencrypt
+      - ./Docker/nginx/.htpasswd:/etc/nginx/.htpasswd

@@ -1,0 +1,54 @@
+global:
+  scrape_interval: 2s
+
+scrape_configs:
+  - job_name: "wowza_ag"
+    relabel_configs:
+      - source_labels: [__meta_ec2_instance_id]
+        target_label: instance_id
+      - source_labels: [__meta_ec2_tag_category]
+        target_label: category
+      - source_labels: [__meta_ec2_public_ip]
+        target_label: publicip
+      - source_labels: [__meta_ec2_private_ip]
+        regex: "(.*)"
+        replacement: "${1}:5000"
+        target_label: __address__
+    ec2_sd_configs:
+      - region: us-east-2
+        refresh_interval: 30s
+        port: 5000
+        filters:
+          - name: tag:wowza
+            values:
+              - autoscale
+  - job_name: "wowza_node"
+    relabel_configs:
+      - source_labels: [__meta_ec2_instance_id]
+        target_label: instance_id
+      - source_labels: [__meta_ec2_tag_category]
+        target_label: category
+      - source_labels: [__meta_ec2_public_ip]
+        target_label: publicip
+      - source_labels: [__meta_ec2_private_ip]
+        regex: "(.*)"
+        replacement: "${1}:9100"
+        target_label: __address__
+    ec2_sd_configs:
+      - region: us-east-2
+        refresh_interval: 30s
+        port: 9100
+        filters:
+          - name: tag:wowza
+            values:
+              - autoscale
+
+      # region: us-east-2
+      # refresh_interval: 40s
+      # access_key: "place your access key here"
+      # secret_key: "place your secret key here"
+      # port: 5000
+      # filters:
+      #   - name: tag:wowza
+      #     values:
+      #       - autoscale

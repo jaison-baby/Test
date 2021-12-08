@@ -1,0 +1,295 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Parameters" : {
+        "SshKeyName" : {
+          "Type" : "AWS::EC2::KeyPair::KeyName",
+          "Default" : "wolf-large"
+        },
+        "GitCommand": {
+            "Type": "String",
+            "NoEcho" : "true"
+        }
+    },
+    "Resources": {
+        "lambdarole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "as_set_desired",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "autoscaling:SetDesiredCapacity",
+                                        "autoscaling:DescribeAutoScalingGroups"
+                                    ],
+                                    "Resource": [
+                                        "*"
+                                    ]
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "PolicyName": "lambda_cloudwatch",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "logs:CreateLogGroup",
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents"
+                                    ],
+                                    "Resource": "arn:aws:logs:*:*:*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "AShookrole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "autoscaling.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "hook_sns_sqs_publishing",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Resource": "*",
+                                    "Action": [
+                                        "sqs:SendMessage",
+                                        "sqs:GetQueueUrl",
+                                        "sns:Publish"
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "aslambda": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Handler": "index.lambda_handler",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "lambdarole",
+                        "Arn"
+                    ]
+                },
+                "Code": {
+                    "ZipFile": {
+                        "Fn::Join": [
+                            "\n",
+                            [
+                                "import json",
+                                "import boto3",
+                                "as_name='wowza-as-cf-1'",
+                                "def lambda_handler(event, context):",
+                                "    message = json.loads(event['Records'][0]['Sns']['Message'])",
+                                "    if message['AutoScalingGroupName'] == as_name:",
+                                "        if 'Heartbeat Timeout' in message['StatusMessage']:",
+                                "            asg_client = boto3.client('autoscaling')",
+                                "            response = asg_client.describe_auto_scaling_groups(AutoScalingGroupNames=[as_name])",
+                                "            desired_count = response['AutoScalingGroups'][0]['DesiredCapacity']",
+                                "            new_desired_count = desired_count - 1",
+                                "            print \"new desired capacity is:%s\" % new_desired_count",
+                                "            ds_response = asg_client.set_desired_capacity(",
+                                "            AutoScalingGroupName=as_name,",
+                                "            DesiredCapacity=new_desired_count,",
+                                "            HonorCooldown=False",
+                                "            )",
+                                "            if ds_response:",
+                                "                print \"SUCCESS\"",
+                                "            else:",
+                                "                print \"FAILURE\""
+                            ]
+                        ]
+                    }
+                },
+                "FunctionName": "aslambda-1",
+                "Runtime": "python2.7",
+                "Timeout": "30"
+            }
+        },
+        "SNStopic": {
+            "Type": "AWS::SNS::Topic",
+            "Properties": {
+                "DisplayName": "AS-sns-topic",
+                "Subscription": [
+                    {
+                        "Endpoint": "magicpolygon@sparksupport.com",
+                        "Protocol": "email"
+                    },
+                    {
+                        "Endpoint": {
+                            "Fn::GetAtt": [
+                                "aslambda",
+                                "Arn"
+                            ]
+                        },
+                        "Protocol": "lambda"
+                    }
+                ],
+                "TopicName": "AS-SNS-topic-1"
+            }
+        },
+        "SnsLambdaRole": {
+          "Type" : "AWS::Lambda::Permission",
+          "Properties" : {
+            "Action" : "lambda:InvokeFunction",
+            "FunctionName" : {
+              "Fn::GetAtt": [
+                "aslambda",
+                "Arn"
+              ]
+            },
+            "Principal" : "sns.amazonaws.com",
+            "SourceArn": {
+              "Ref": "SNStopic"
+            }
+          }
+        },
+        "asSQS": {
+            "Type": "AWS::SQS::Queue",
+            "Properties": {
+                "MessageRetentionPeriod": 300,
+                "QueueName": "as-sqs-1",
+                "ReceiveMessageWaitTimeSeconds": 20,
+                "VisibilityTimeout": 30
+            }
+        },
+        "WowzaAS": {
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "Properties": {
+                "AvailabilityZones": {
+                    "Fn::GetAZs": ""
+                },
+                "AutoScalingGroupName": "wowza-as-cf-1",
+                "LaunchConfigurationName": {
+                    "Ref": "WowzaAsLaunchconfig"
+                },
+                "MinSize": "0",
+                "MaxSize": "1",
+                "Cooldown": "300",
+                "DesiredCapacity": "0",
+                "NotificationConfigurations": [
+                    {
+                        "TopicARN": {
+                            "Ref": "SNStopic"
+                        },
+                        "NotificationTypes": [
+                            "autoscaling:EC2_INSTANCE_LAUNCH_ERROR"
+                        ]
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "wowza-1",
+                        "Value": "autoscale-1",
+                        "PropagateAtLaunch": "true"
+                    },
+                    {
+                        "Key": "Reference",
+                        "Value": "Created from Cloudformation Stack",
+                        "PropagateAtLaunch": "true"
+                    }
+                ]
+            }
+        },
+        "WowzaAsLaunchconfig": {
+            "Type": "AWS::AutoScaling::LaunchConfiguration",
+            "Properties": {
+                "ImageId": "ami-0e2b3408f7e90cb5e",
+                "SecurityGroups": [
+                    "sg-0a672583dc4c7a04d"
+                ],
+                "InstanceType": "m4.large",
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [
+                            "",
+                            [
+                                "#!/bin/bash -ex\n",
+                                { "Fn::Sub": ["cd /usr/src && git clone ${gitcommand}\n", { "gitcommand": {"Ref" : "GitCommand" }}]},
+                                "sudo service supervisord start\n",
+                                "sudo service node-exporter start\n",
+                                "echo 'user data is executed'\n"
+                            ]
+                        ]
+                    }
+                },
+                "KeyName": { "Ref" : "SshKeyName" }
+        }
+
+        },
+        "Aslifehook": {
+            "Type": "AWS::AutoScaling::LifecycleHook",
+            "Properties": {
+                "AutoScalingGroupName": {
+                    "Ref": "WowzaAS"
+                },
+                "LifecycleTransition": "autoscaling:EC2_INSTANCE_LAUNCHING",
+                "NotificationTargetARN": {
+                    "Fn::GetAtt": [
+                                "asSQS",
+                                "Arn"
+                            ]
+                },
+                "RoleARN": {
+                    "Fn::GetAtt": [
+                        "AShookrole",
+                        "Arn"
+                    ]
+                },
+                "HeartbeatTimeout": 300,
+                "DefaultResult": "ABANDON"
+            }
+
+        }
+    }
+}

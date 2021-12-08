@@ -1,0 +1,50 @@
+# Step 1 select default OS image
+FROM ubuntu:18.04
+
+# # Step 2 tell what you want to do
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+RUN apt-get update \
+  && apt-get install -y python3-pip python3-dev vim-tiny libatlas-base-dev gfortran nginx supervisor \
+  && cd /usr/local/bin \
+  && ln -s /usr/bin/python3 python \
+  && pip3 install --upgrade pip
+RUN pip3 install uwsgi
+
+RUN apt-get install -y wget unzip
+
+ENV CONSUL_URL https://releases.hashicorp.com/consul/1.9.5/consul_1.9.5_linux_amd64.zip
+RUN wget -q $CONSUL_URL -O /tmp/consul.zip && unzip /tmp/consul.zip && mv /consul /bin/consul && \
+   mkdir /etc/consul.d/
+
+# # Step 3 Configure a software
+# # Defining working directory
+WORKDIR /usr/src/app
+
+# # Copy everything which is present in my docker directory to working (/app)
+COPY Flask/requirements.txt /usr/src/app
+
+RUN pip3 install -r requirements.txt
+
+RUN useradd --no-create-home nginx
+
+RUN rm /etc/nginx/sites-enabled/default
+RUN rm -r /root/.cache
+
+COPY Flask/server-conf/nginx.conf /etc/nginx/
+COPY Flask/server-conf/flask-site-nginx.conf /etc/nginx/conf.d/
+COPY Flask/server-conf/inspector_uwsgi.ini /etc/uwsgi/uwsgi.ini
+COPY Flask/server-conf/supervisord.conf /etc/supervisor/
+COPY Flask/server-conf/inspector_consul-agent.json /etc/consul.d/consul-agent.json
+
+RUN pip3 install redis
+# Exposing an internal port
+EXPOSE 5001
+#RUN touch /tmp/inspector_supervisor.log && touch /tmp/inspector_supervisor.pid
+
+# Step 4 set default commands
+# These are permanent commands i.e even if user will provide come commands those will be considered as argunemts of this command
+CMD ["/usr/bin/supervisord"]
+

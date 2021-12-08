@@ -1,0 +1,54 @@
+{
+
+ "variables": {
+   "aws_access_key": "",
+   "aws_secret_key": ""
+ },
+ "builders": [{
+   "type": "amazon-ebs",
+   "communicator": "ssh",
+   "ssh_pty": "true",
+   "region": "us-east-2",
+   "source_ami": "",
+   "instance_type": "m4.large",
+   "ssh_username": "ec2-user",
+   "ami_name": "packerwowza {{timestamp}}"
+ }],
+"provisioners": [
+  {
+    "type": "file",
+    "source": "/wolbf/Automation/packer/node-exporter",
+    "destination": "/tmp/"
+  },
+  {
+    "type": "file",
+    "source": "/wolbf/Automation/packer/exporter.ini",
+    "destination": "/tmp/"
+  },
+
+{
+    "type": "file",
+    "source": "/wolbf/Automation/packer/supervisord.conf",
+    "destination": "/tmp/"
+  },
+{
+    "type": "file",
+    "source": "/wolbf/Automation/packer/supervisord.d",
+    "destination": "/tmp/"
+  },
+{
+    "type": "file",
+    "source": "/wolbf/Automation/packer/supervisord",
+    "destination": "/tmp/"
+  },
+
+{
+    "type": "shell",
+    "script": "/wolbf/Automation/packer/new-ami.sh"
+   
+  }
+
+ 
+]
+
+}
