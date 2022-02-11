@@ -1,0 +1,29 @@
+https://www.youtube.com/watch?v=YcJ9IeukJL8  - To understand the basics
+
+https://www.linuxtechi.com/how-to-launch-aws-ec2-instance-using-terraform/
+
+https://learn.hashicorp.com/tutorials/terraform/aws-build
+
+
+Providers
+The provider block configures the specified provider, in this case aws. A provider is a plugin that Terraform uses to create and manage your resources.
+
+Resources
+Use resource blocks to define components of your infrastructure. A resource might be a physical or virtual component such as an EC2 instance
+
+
+Terraform command
+—---------------------------------
+
+Terraform inti → Initializing a configuration directory 
+
+terraform fmt →     automatically updates configurations in the current directory for readability and consistency.
+
+terraform validate → Validate your configuration
+
+terraform apply → Apply the configuration now with the terraform apply command. Terraform will print output similar to what is shown below
+
+terraform show  → Inspect the current state
+
+terraform state list → list of the resources in your project's state.
+
